@@ -54,21 +54,21 @@
         <dependency>
             <groupId>com.itextpdf</groupId>
             <artifactId>itext7-core</artifactId>
-            <version>8.0.2</version>
+            <version>7.2.5</version>
             <type>pom</type>
+        </dependency>
+
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>sign</artifactId>
+            <version>7.2.5</version>
         </dependency>
 
         <!-- BouncyCastle cho xử lý khóa -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk15to18</artifactId>
-            <version>1.76</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.itextpdf</groupId>
-            <artifactId>bouncy-castle-adapter</artifactId>
-            <version>8.0.2</version>  <!-- Use the same version as your other iText dependencies -->
+            <artifactId>bcprov-jdk15on</artifactId>
+            <version>1.70</version>
         </dependency>
 
     </dependencies>

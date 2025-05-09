@@ -1,5 +1,6 @@
 package org.example.testdigitalsignature.controller;
 
+import org.example.testdigitalsignature.common.MockMultipartFile;
 import org.example.testdigitalsignature.service.SignatureService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Objects;
 
 @RestController
@@ -76,7 +79,26 @@ public class SignatureController {
                 .body(signedOut.toByteArray());
     }
 
+    @PostMapping("/remote-signing")
+    public ResponseEntity<?> signAndVerify(@RequestParam("file") MultipartFile file) throws Exception {
+        // Step 1: Prepare signing
+        Map<String, String> result = signatureService.prepareSign(file);
+        String sessionId = result.get("sessionId");
+
+        // get signature value from hash and file empty signature
 
 
+        // Step 2: Submit signature
+        // gGhe chuoi signature vao file empty sig
+        byte[] signedPdf = signatureService.submitSignature(sessionId, result.get("hash"));
 
+        // Step 3: Verify
+        boolean valid = signatureService.verifySignature(new MockMultipartFile("signed.pdf", signedPdf));
+
+        return ResponseEntity.ok(Map.of(
+                "sessionId", sessionId,
+                "valid", valid,
+                "signedPdf", Base64.getEncoder().encodeToString(signedPdf)
+        ));
+    }
 }

@@ -11,16 +11,12 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.StampingProperties;
 import com.itextpdf.signatures.*;
-import org.example.testdigitalsignature.common.ExtendedPdfSigner;
 import org.example.testdigitalsignature.util.KeyStoreLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
-import java.security.GeneralSecurityException;
-import java.security.MessageDigest;
-import java.security.PrivateKey;
-import java.security.Signature;
+import java.security.*;
 import java.security.cert.Certificate;
 import java.util.Base64;
 import java.util.List;
@@ -35,6 +31,7 @@ public class SignatureService {
     private final KeyStoreLoader keyStoreLoader;
     private final Map<String, ByteArrayOutputStream> sessionData = new ConcurrentHashMap<>();
     private final Map<String, byte[]> hashStore = new ConcurrentHashMap<>();
+    private static final int SIGNATURE_ESTIMATION_SIZE = 8192;
 
     public SignatureService(KeyStoreLoader keyStoreLoader) {
         this.keyStoreLoader = keyStoreLoader;
@@ -131,72 +128,200 @@ public class SignatureService {
     }
 
     public Map<String, String> prepareSign(MultipartFile file) throws Exception {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("PDF file cannot be null or empty");
+        }
+
         String sessionId = UUID.randomUUID().toString();
 
-        PdfReader reader = new PdfReader(file.getInputStream());
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        PdfSigner signer = new PdfSigner(reader, baos, new StampingProperties());
+        try (PdfReader reader = new PdfReader(file.getInputStream());
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
 
-        signer.setFieldName("Signature1");
-        PdfSignatureAppearance appearance = signer.getSignatureAppearance()
-                .setReason("Pre-sign")
-                .setLocation("VN")
-                .setReuseAppearance(false)
-                .setPageRect(new Rectangle(100, 100, 200, 100))
-                .setPageNumber(1);
+            // Create and configure PDF signer
+            PdfSigner signer = createPdfSigner(reader, baos);
 
-        byte[] hash = calculateDocumentHash(signer);
+            // Configure appearance for the signature
+            configureSignatureAppearance(signer);
 
-        sessionData.put(sessionId, baos);
-        hashStore.put(sessionId, hash);
+            // Prepare for external signing
+            PreSignExternalSignatureContainer container = new PreSignExternalSignatureContainer();
+            signer.signExternalContainer(container, SIGNATURE_ESTIMATION_SIZE);
 
-        String base64Hash = Base64.getEncoder().encodeToString(hash);
+            // Generate hash from the data to be signed
+            byte[] dataToSign = container.getDataToSign();
+            byte[] hash = generateHash(dataToSign);
 
-        return Map.of("sessionId", sessionId, "hash", base64Hash);
+            // Store session data for later use
+            storeSessionData(sessionId, baos, dataToSign);
+
+            // Return data needed for external signing
+            String base64Hash = Base64.getEncoder().encodeToString(hash);
+            System.out.println(base64Hash);
+            return Map.of("sessionId", sessionId, "hash", base64Hash);
+        }
     }
 
-    private byte[] calculateDocumentHash(ExtendedPdfSigner signer) throws GeneralSecurityException, IOException {
-        IExternalDigest digest = new BouncyCastleDigest();
-        InputStream dataToSign = signer.getRangeStream();
-        MessageDigest md = digest.getMessageDigest("SHA256");
-        return DigestAlgorithms.digest(dataToSign, md);
-    }
-
-
+    /**
+     * Completes the signing process with the externally generated signature.
+     *
+     * @param sessionId       The session identifier from the preparation phase
+     * @param signatureBase64 The Base64-encoded signature
+     * @return The signed PDF document as a byte array
+     * @throws Exception If an error occurs during signing
+     */
     public byte[] submitSignature(String sessionId, String signatureBase64) throws Exception {
+        // Retrieve and validate session data
         ByteArrayOutputStream baos = sessionData.get(sessionId);
+        if (baos == null) {
+            throw new IllegalArgumentException("Invalid or expired sessionId");
+        }
+
         byte[] signature = Base64.getDecoder().decode(signatureBase64);
 
-        if (baos == null) throw new IllegalArgumentException("Invalid sessionId");
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+             ByteArrayOutputStream signedOutput = new ByteArrayOutputStream()) {
 
-        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
-        ByteArrayOutputStream signedOutput = new ByteArrayOutputStream();
+            // Create PDF signer in append mode
+            PdfReader reader = new PdfReader(bais);
+            PdfSigner signer = new PdfSigner(reader, signedOutput, new StampingProperties().useAppendMode());
 
-        PdfSigner signer = new PdfSigner(new PdfReader(bais), signedOutput, new StampingProperties());
-        signer.setFieldName("Signature1");
+            // IMPORTANT: Do NOT set the field name again here
+            // The field was already created in prepareSign
+            // Setting it again causes the "Field has been already signed" error
 
-        signer.signExternalContainer(new ExternalSignatureContainer() {
+            // Complete the signing process with the provided signature
+            IExternalSignatureContainer container = new IExternalSignatureContainer() {
+                @Override
+                public byte[] sign(InputStream data) {
+                    return signature;
+                }
+
+                @Override
+                public void modifySigningDictionary(PdfDictionary signDic) {
+                    // No modifications needed
+                }
+            };
+
+            signer.signExternalContainer(container, 8192);
+
+            // Optional: Clean up session data
+            sessionData.remove(sessionId);
+            hashStore.remove(sessionId);
+
+            return signedOutput.toByteArray();
+        }
+    }
+
+
+    /**
+     * Verifies the signatures in a signed PDF document.
+     * 
+     * @param signedPdf The signed PDF document
+     * @return true if all signatures are valid, false otherwise
+     * @throws Exception If an error occurs during verification
+     */
+    public boolean verifySignature(MultipartFile signedPdf) throws Exception {
+        if (signedPdf == null || signedPdf.isEmpty()) {
+            throw new IllegalArgumentException("Signed PDF file cannot be null or empty");
+        }
+        
+        try (PdfDocument pdfDoc = new PdfDocument(new PdfReader(signedPdf.getInputStream()))) {
+            SignatureUtil signUtil = new SignatureUtil(pdfDoc);
+            List<String> names = signUtil.getSignatureNames();
+            
+            if (names.isEmpty()) {
+                return false; // No signatures found
+            }
+            
+            for (String name : names) {
+                try {
+                    PdfPKCS7 pkcs7 = signUtil.readSignatureData(name);
+                    if (pkcs7 == null) {
+                        return false; // Couldn't read signature data
+                    }
+                    
+                    // Try to verify the signature, catching any internal errors
+                    if (!pkcs7.verifySignatureIntegrityAndAuthenticity()) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    // Log the error for debugging purposes
+                    System.err.println("Error verifying signature '" + name + "': " + e.getMessage());
+                    return false; // Consider the signature invalid if verification throws an exception
+                }
+            }
+            
+            return true; // All signatures are valid
+        }
+    }
+
+
+// Helper methods for cleaner implementation
+
+    private PdfSigner createPdfSigner(PdfReader reader, ByteArrayOutputStream outputStream) throws IOException {
+        return new PdfSigner(reader, outputStream, new StampingProperties());
+    }
+
+    private void configureSignatureAppearance(PdfSigner signer) {
+        signer.setFieldName(DEFAULT_SIGNATURE_FIELD_NAME);
+        signer.getSignatureAppearance()
+                .setReason(DEFAULT_SIGNATURE_REASON)
+                .setLocation(DEFAULT_SIGNATURE_LOCATION)
+                .setReuseAppearance(false)
+                .setPageRect(new Rectangle(640, 70, 150, 80))
+                .setPageNumber(1);
+    }
+
+    private byte[] generateHash(byte[] dataToSign) throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        return md.digest(dataToSign);
+    }
+
+    private void storeSessionData(String sessionId, ByteArrayOutputStream baos, byte[] dataToSign) {
+        sessionData.put(sessionId, baos);
+        hashStore.put(sessionId, dataToSign);
+    }
+
+    private void cleanupSessionData(String sessionId) {
+        // Optional: remove session data after use to free up memory
+        sessionData.remove(sessionId);
+        hashStore.remove(sessionId);
+    }
+
+    private IExternalSignatureContainer createSignatureContainer(byte[] signature) {
+        return new IExternalSignatureContainer() {
+            @Override
             public byte[] sign(InputStream data) {
                 return signature;
             }
 
-            public void modifySigningDictionary(PdfDictionary signDic) {}
-        }, 8192);
-
-        return signedOutput.toByteArray();
+            @Override
+            public void modifySigningDictionary(PdfDictionary signDic) {
+                // No modifications needed
+            }
+        };
     }
 
-    public boolean verifySignature(MultipartFile signedPdf) throws Exception {
-        PdfDocument pdfDoc = new PdfDocument(new PdfReader(signedPdf.getInputStream()));
-        SignatureUtil signUtil = new SignatureUtil(pdfDoc);
-        List<String> names = signUtil.getSignatureNames();
+    private static class PreSignExternalSignatureContainer implements IExternalSignatureContainer {
+        private final ByteArrayOutputStream dataToSign = new ByteArrayOutputStream();
 
-        for (String name : names) {
-            PdfPKCS7 pkcs7 = signUtil.readSignatureData(name);
-            if (!pkcs7.verifySignatureIntegrityAndAuthenticity()) {
-                return false;
+        @Override
+        public byte[] sign(InputStream is) throws GeneralSecurityException {
+            try {
+                is.transferTo(dataToSign);
+            } catch (IOException e) {
+                throw new GeneralSecurityException("Unable to read data to sign", e);
             }
+            return new byte[0]; // dummy signature for pre-sign
         }
-        return true;
+
+        @Override
+        public void modifySigningDictionary(PdfDictionary signDic) {
+            // No modification needed
+        }
+
+        public byte[] getDataToSign() {
+            return dataToSign.toByteArray();
+        }
     }
 }
