@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ký Số PDF - Defer Signing</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .disabled {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        .step-container {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        .hash-display {
+            word-break: break-all;
+            font-family: monospace;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        #signaturePreview img {
+            max-height: 100px;
+            max-width: 200px;
+            border: 1px dashed #ccc;
+        }
+    </style>
+</head>
+<body>
+<div class="container mt-5 mb-5">
+    <h1 class="mb-4 text-center">Ký Số PDF - Defer Signing</h1>
+
+    <!-- Bước 1: Chuẩn bị tài liệu -->
+    <div class="step-container">
+        <h3>Bước 1: Chuẩn bị tài liệu</h3>
+        <div class="mb-3">
+            <label for="pdfFile" class="form-label">Chọn file PDF:</label>
+            <input type="file" class="form-control" id="pdfFile" accept="application/pdf" />
+        </div>
+
+        <!-- Vị trí chữ ký -->
+        <div class="mt-3">
+            <h5>Vị trí chữ ký:</h5>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label for="page" class="form-label">Số trang:</label>
+                        <input type="number" id="page" class="form-control" value="1" min="1" />
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label class="form-label">Vị trí:</label>
+                        <select id="signaturePosition" class="form-select">
+                            <option value="bottom-right">Góc dưới bên phải</option>
+                            <option value="bottom-left">Góc dưới bên trái</option>
+                            <option value="top-right">Góc trên bên phải</option>
+                            <option value="top-left">Góc trên bên trái</option>
+                            <option value="center">Giữa trang</option>
+                            <option value="custom">Tùy chỉnh</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div id="customPosition" style="display: none;">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <label for="posX" class="form-label">X:</label>
+                            <input type="number" id="posX" class="form-control" value="400" min="0" />
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <label for="posY" class="form-label">Y:</label>
+                            <input type="number" id="posY" class="form-control" value="100" min="0" />
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <label for="posWidth" class="form-label">Chiều rộng:</label>
+                            <input type="number" id="posWidth" class="form-control" value="200" min="10" />
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="mb-2">
+                            <label for="posHeight" class="form-label">Chiều cao:</label>
+                            <input type="number" id="posHeight" class="form-control" value="50" min="10" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Thông tin chữ ký -->
+        <div class="mt-3">
+            <h5>Thông tin chữ ký:</h5>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label for="signerName" class="form-label">Tên người ký:</label>
+                        <input type="text" id="signerName" class="form-control" placeholder="Nguyễn Văn A" />
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-2">
+                        <label for="signatureImage" class="form-label">Hình ảnh chữ ký (JPG, PNG):</label>
+                        <input type="file" id="signatureImage" class="form-control" accept="image/jpeg,image/png,image/gif" />
+                        <small class="text-muted">Để trống nếu không cần thêm ảnh chữ ký</small>
+                    </div>
+                </div>
+            </div>
+            <div id="signaturePreview" class="mt-2" style="display: none;">
+                <label class="form-label">Xem trước ảnh chữ ký:</label>
+                <div class="border p-2" style="max-width: 200px;">
+                    <img id="previewImage" class="img-fluid" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Nút Chuẩn bị tài liệu -->
+        <div class="d-grid gap-2 mt-3">
+            <button type="button" id="prepareButton" class="btn btn-primary">
+                <span id="prepareLoader" class="spinner-border spinner-border-sm me-2" style="display: none;"></span>
+                Chuẩn bị tài liệu
+            </button>
+        </div>
+    </div>
+
+    <!-- Bước 2: Hash Value -->
+    <div id="step2" class="step-container disabled">
+        <h3>Bước 2: Giá trị Hash</h3>
+        <div class="mb-3">
+            <label class="form-label">Hash cần ký (được tính từ file PDF):</label>
+            <div id="hashOutput" class="hash-display">Hash sẽ xuất hiện ở đây sau khi chuẩn bị tài liệu</div>
+        </div>
+        <div class="mb-3">
+            <label for="sessionIdOutput" class="form-label">Session ID:</label>
+            <input type="text" class="form-control" id="sessionIdOutput" readonly />
+        </div>
+        <div class="alert alert-info">
+            <strong>Hướng dẫn:</strong> Sử dụng thiết bị ký số bên ngoài để ký giá trị hash này.
+            Sau khi ký xong, bạn sẽ có được chữ ký PKCS#1 để tiếp tục bước 3.
+        </div>
+    </div>
+
+    <!-- Bước 3: Hoàn thành ký tài liệu -->
+    <div id="step3" class="step-container disabled">
+        <h3>Bước 3: Hoàn thành ký tài liệu</h3>
+        <div class="mb-3">
+            <label for="signatureValue" class="form-label">Chữ ký PKCS#1 (đã ký từ thiết bị ngoài):</label>
+            <textarea class="form-control" id="signatureValue" rows="4" placeholder="Dán chữ ký PKCS#1 đã ký vào đây (định dạng base64)"></textarea>
+        </div>
+        <div class="mb-3">
+            <label for="p12File" class="form-label">Hoặc tải lên file P12/PFX:</label>
+            <input type="file" class="form-control" id="p12File" accept=".p12,.pfx" />
+        </div>
+        <div class="mb-3">
+            <label for="p12Password" class="form-label">Mật khẩu file P12/PFX:</label>
+            <input type="password" class="form-control" id="p12Password" />
+        </div>
+        <div class="d-grid gap-2">
+            <button type="button" id="signButton" class="btn btn-success">
+                <span id="signLoader" class="spinner-border spinner-border-sm me-2" style="display: none;"></span>
+                Hoàn thành ký tài liệu
+            </button>
+        </div>
+    </div>
+
+    <!-- Kết quả -->
+    <div id="result" class="step-container" style="display: none;">
+        <h3>Kết quả</h3>
+        <div class="alert alert-success">
+            <strong>Thành công!</strong> Tài liệu PDF đã được ký số.
+        </div>
+        <div class="text-center">
+            <a id="downloadLink" href="#" class="btn btn-primary" download="signed.pdf">Tải xuống tài liệu đã ký</a>
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Xử lý JavaScript cho ứng dụng -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Khai báo các biến tham chiếu đến DOM
+        const pdfFileInput = document.getElementById('pdfFile');
+        const prepareButton = document.getElementById('prepareButton');
+        const prepareLoader = document.getElementById('prepareLoader');
+        const hashOutput = document.getElementById('hashOutput');
+        const sessionIdOutput = document.getElementById('sessionIdOutput');
+        const step2Section = document.getElementById('step2');
+        const step3Section = document.getElementById('step3');
+        const signatureValueInput = document.getElementById('signatureValue');
+        const p12FileInput = document.getElementById('p12File');
+        const p12PasswordInput = document.getElementById('p12Password');
+        const signButton = document.getElementById('signButton');
+        const signLoader = document.getElementById('signLoader');
+        const resultSection = document.getElementById('result');
+        const downloadLink = document.getElementById('downloadLink');
+
+        // Xử lý xem trước ảnh chữ ký
+        const signatureImageInput = document.getElementById('signatureImage');
+        signatureImageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const previewElement = document.getElementById('signaturePreview');
+            const previewImg = document.getElementById('previewImage');
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewElement.style.display = 'block';
+                }
+                reader.readAsDataURL(file);
+            } else {
+                previewElement.style.display = 'none';
+            }
+        });
+
+        // Xử lý vị trí chữ ký
+        const positionSelect = document.getElementById('signaturePosition');
+        positionSelect.addEventListener('change', function() {
+            const customFields = document.getElementById('customPosition');
+            if (this.value === 'custom') {
+                customFields.style.display = 'block';
+            } else {
+                customFields.style.display = 'none';
+
+                // Thiết lập vị trí dựa trên lựa chọn
+                const posX = document.getElementById('posX');
+                const posY = document.getElementById('posY');
+
+                switch(this.value) {
+                    case 'bottom-right':
+                        posX.value = 400;
+                        posY.value = 100;
+                        break;
+                    case 'bottom-left':
+                        posX.value = 50;
+                        posY.value = 100;
+                        break;
+                    case 'top-right':
+                        posX.value = 400;
+                        posY.value = 700;
+                        break;
+                    case 'top-left':
+                        posX.value = 50;
+                        posY.value = 700;
+                        break;
+                    case 'center':
+                        posX.value = 200;
+                        posY.value = 400;
+                        break;
+                }
+            }
+        });
+
+        // Hàm hiển thị thông báo lỗi
+        function showAlert(message, type = 'danger') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+
+            const container = document.querySelector('.container');
+            container.insertBefore(alertDiv, container.firstChild);
+
+            // Tự động đóng thông báo sau 5 giây
+            setTimeout(() => {
+                alertDiv.classList.remove('show');
+                setTimeout(() => alertDiv.remove(), 150);
+            }, 5000);
+        }
+
+        // Xử lý sự kiện "Chuẩn bị tài liệu"
+        prepareButton.addEventListener('click', async function() {
+            console.log("Prepare button clicked");
+
+            const pdfFile = pdfFileInput.files[0];
+            if (!pdfFile) {
+                showAlert('Vui lòng chọn file PDF cần ký');
+                return;
+            }
+
+            try {
+                // Hiển thị loader
+                prepareLoader.style.display = 'block';
+                prepareButton.disabled = true;
+
+                // Tạo FormData
+                const formData = new FormData();
+                formData.append('file', pdfFile);
+                formData.append('page', document.getElementById('page').value);
+                formData.append('x', document.getElementById('posX').value);
+                formData.append('y', document.getElementById('posY').value);
+                formData.append('width', document.getElementById('posWidth').value);
+                formData.append('height', document.getElementById('posHeight').value);
+
+                // Thêm hình ảnh chữ ký nếu có
+                if (signatureImageInput.files[0]) {
+                    formData.append('signatureImage', signatureImageInput.files[0]);
+                }
+
+                // Thêm tên người ký nếu có
+                const signerName = document.getElementById('signerName').value;
+                if (signerName) {
+                    formData.append('signerName', signerName);
+                }
+
+                console.log("Sending prepare request");
+
+                // Gửi request để chuẩn bị tài liệu
+                const response = await fetch('/api/pdf/prepare-signing', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    console.log("Prepare request successful:", result);
+
+                    // Hiển thị hash và sessionId
+                    hashOutput.textContent = result.hash;
+                    sessionIdOutput.value = result.sessionId;
+
+                    // Enable các bước tiếp theo
+                    step2Section.classList.remove('disabled');
+                    step3Section.classList.remove('disabled');
+
+                    // Hiển thị thông báo thành công
+                    showAlert('Tài liệu đã được chuẩn bị thành công. Bạn có thể tiếp tục với bước 2.', 'success');
+                } else {
+                    console.error("Prepare request failed:", result);
+                    showAlert('Lỗi: ' + (result.message || 'Không thể chuẩn bị tài liệu'));
+                }
+            } catch (error) {
+                console.error("Error in prepare request:", error);
+                showAlert('Lỗi: ' + error.message);
+            } finally {
+                // Ẩn loader
+                prepareLoader.style.display = 'none';
+                prepareButton.disabled = false;
+            }
+        });
+
+        // Xử lý sự kiện "Hoàn thành ký tài liệu"
+        signButton.addEventListener('click', async function() {
+            const sessionId = sessionIdOutput.value;
+            if (!sessionId) {
+                showAlert('Vui lòng chuẩn bị tài liệu trước (Bước 1)');
+                return;
+            }
+
+            // Kiểm tra xem có sử dụng chữ ký PKCS#1 hay file P12
+            const signatureValue = signatureValueInput.value.trim();
+            const p12File = p12FileInput.files[0];
+
+            if (!signatureValue && !p12File) {
+                showAlert('Vui lòng nhập chữ ký PKCS#1 hoặc tải lên file P12/PFX');
+                return;
+            }
+
+            if (p12File && !p12PasswordInput.value) {
+                showAlert('Vui lòng nhập mật khẩu cho file P12/PFX');
+                return;
+            }
+
+            try {
+                // Hiển thị loader
+                signLoader.style.display = 'block';
+                signButton.disabled = true;
+
+                let response;
+
+                if (p12File) {
+                    // Trường hợp sử dụng file P12/PFX
+                    const formData = new FormData();
+                    formData.append('p12File', p12File);
+                    formData.append('password', p12PasswordInput.value);
+                    formData.append('sessionId', sessionId);
+
+                    response = await fetch('/api/pdf/sign-with-p12', {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // Trường hợp sử dụng chữ ký PKCS#1
+                    response = await fetch('/api/pdf/complete-signing', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            signature: signatureValue,
+                            sessionId: sessionId
+                        })
+                    });
+                }
+
+                if (response.ok) {
+                    // Lấy file PDF đã ký dưới dạng blob
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    // Thiết lập link tải xuống
+                    downloadLink.href = url;
+
+                    // Hiển thị kết quả
+                    resultSection.style.display = 'block';
+
+                    // Tự động cuộn đến phần kết quả
+                    resultSection.scrollIntoView({ behavior: 'smooth' });
+
+                    // Hiển thị thông báo thành công
+                    showAlert('Tài liệu đã được ký thành công!', 'success');
+                } else {
+                    const errorResult = await response.json();
+                    showAlert('Lỗi: ' + (errorResult.message || 'Không thể ký tài liệu'));
+                }
+            } catch (error) {
+                console.error("Error in signing request:", error);
+                showAlert('Lỗi: ' + error.message);
+            } finally {
+                // Ẩn loader
+                signLoader.style.display = 'none';
+                signButton.disabled = false;
+            }
+        });
+    });
+</script>
+</body>
+</html>

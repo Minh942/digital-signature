@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Trang chủ</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+<div class="container mt-5">
+    <div class="jumbotron">
+        <h1 class="display-4" th:text="${message}">Chào mừng</h1>
+        <p class="lead">Ứng dụng ký số PDF sử dụng Spring Boot và iText</p>
+        <hr class="my-4">
+        <p>Bạn có thể ký số tài liệu PDF bằng cách sử dụng chứng chỉ P12.</p>
+        <a class="btn btn-primary btn-lg" th:href="@{/sign}" role="button">Bắt đầu ký số</a>
+    </div>
+</div>
+</body>
+</html>
