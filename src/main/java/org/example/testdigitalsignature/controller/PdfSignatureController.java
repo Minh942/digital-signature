@@ -1,6 +1,7 @@
 package org.example.testdigitalsignature.controller;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.example.testdigitalsignature.service.PdfSigningService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -13,6 +14,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/pdf")
 @RequiredArgsConstructor
@@ -21,10 +23,10 @@ public class PdfSignatureController {
     private final PdfSigningService pdfSigningService;
 
     /**
-     * API để chuẩn bị tài liệu PDF cho việc ký số defer với vị trí tùy chỉnh và hình ảnh chữ ký
+     * Bước 1: Chuẩn bị tài liệu và tạo hash
      */
-    @PostMapping("/prepare-signing")
-    public ResponseEntity<?> preparePdfForSigning(
+    @PostMapping("/prepare")
+    public ResponseEntity<?> prepareDocument(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "page", required = false, defaultValue = "1") Integer page,
             @RequestParam(value = "x", required = false, defaultValue = "400") Float x,
@@ -63,7 +65,7 @@ public class PdfSignatureController {
                 }
             }
 
-            String hashWithSessionId = pdfSigningService.preparePdfForDeferredSigning(
+            String hashWithSessionId = pdfSigningService.preparePdfForSigning(
                     file, page, x, y, width, height, signatureImage, signerName);
             String[] parts = hashWithSessionId.split(":");
             String hash = parts[0];
@@ -75,7 +77,7 @@ public class PdfSignatureController {
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error(e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
                     "error", true,
                     "message", "Lỗi khi chuẩn bị file: " + e.getMessage()
@@ -84,43 +86,10 @@ public class PdfSignatureController {
     }
 
     /**
-     * API để hoàn thành việc ký số với chữ ký PKCS#1 từ thiết bị ngoài
+     * Bước 2: Tạo chữ ký từ hash và file P12
      */
-    @PostMapping("/complete-signing")
-    public ResponseEntity<?> completePdfSigning(@RequestBody Map<String, String> request) {
-        try {
-            String signatureValue = request.get("signature");
-            String sessionId = request.get("sessionId");
-
-            if (signatureValue == null || sessionId == null) {
-                return ResponseEntity.badRequest().body(Map.of(
-                        "error", true,
-                        "message", "Thiếu thông tin chữ ký hoặc sessionId"
-                ));
-            }
-
-            byte[] signedPdf = pdfSigningService.completeDeferredSigning(Base64.getDecoder().decode(signatureValue), sessionId);
-
-            // Trả về file PDF đã ký
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_PDF);
-            headers.setContentDispositionFormData("attachment", "signed.pdf");
-
-            return new ResponseEntity<>(signedPdf, headers, HttpStatus.OK);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                    "error", true,
-                    "message", "Lỗi khi ký file: " + e.getMessage()
-            ));
-        }
-    }
-
-    /**
-     * API để ký PDF trực tiếp với file P12/PFX
-     */
-    @PostMapping("/sign-with-p12")
-    public ResponseEntity<?> signPdfWithP12(
+    @PostMapping("/create-signature")
+    public ResponseEntity<?> createSignature(
             @RequestParam("p12File") MultipartFile p12File,
             @RequestParam("password") String password,
             @RequestParam("sessionId") String sessionId) {
@@ -133,19 +102,46 @@ public class PdfSignatureController {
                 ));
             }
 
-            byte[] signedPdf = pdfSigningService.signDeferredPdfWithP12(p12File, password, sessionId);
+            byte[] signature = pdfSigningService.createSignature(p12File, password, sessionId);
+            String base64Signature = java.util.Base64.getEncoder().encodeToString(signature);
 
-            // Trả về file PDF đã ký
+            Map<String, Object> response = new HashMap<>();
+            response.put("signature", base64Signature);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error(e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "error", true,
+                    "message", "Lỗi khi tạo chữ ký: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Bước 3: Hoàn thành ký tài liệu
+     */
+    @PostMapping("/complete")
+    public ResponseEntity<?> completeSigning(
+            @RequestParam("signature") String signature,
+            @RequestParam("sessionId") String sessionId) {
+
+        try {
+            byte[] signedPdf = pdfSigningService.completeSigning(
+                    java.util.Base64.getDecoder().decode(signature),
+                    sessionId
+            );
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
             headers.setContentDispositionFormData("attachment", "signed.pdf");
 
             return new ResponseEntity<>(signedPdf, headers, HttpStatus.OK);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error(e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
                     "error", true,
-                    "message", "Lỗi khi ký file với P12: " + e.getMessage()
+                    "message", "Lỗi khi hoàn thành ký: " + e.getMessage()
             ));
         }
     }

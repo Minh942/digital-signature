@@ -3,6 +3,7 @@ package org.example.testdigitalsignature.common;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.security.cert.Certificate;
 import java.util.Date;
 
 @Getter
@@ -32,6 +33,11 @@ public class SigningSession {
      * Tên người ký (nếu có)
      */
     private String signerName;
+
+    /**
+     * Chứng chỉ ký (nếu có)
+     */
+    private Certificate[] certificateChain;
 
     /**
      * Thời điểm tạo phiên
